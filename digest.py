@@ -250,7 +250,22 @@ def upload_gist(html_body):
     data = resp.json()
     raw_url = data["files"][filename]["raw_url"]
     preview_url = f"https://htmlpreview.github.io/?{raw_url}"
-    return data["html_url"], preview_url
+    short_url = shorten_url(preview_url)
+    return data["html_url"], preview_url, short_url
+
+
+def shorten_url(url):
+    """Shorten a URL via is.gd (free, no auth)."""
+    try:
+        resp = requests.get(
+            "https://is.gd/create.php",
+            params={"format": "simple", "url": url},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.text.strip()
+    except Exception:
+        return None
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -277,9 +292,11 @@ def main():
     if GITHUB_TOKEN:
         print("[4/5] uploading shareable link …")
         try:
-            gist_url, preview_url = upload_gist(html)
+            gist_url, preview_url, short_url = upload_gist(html)
             print(f"       gist:    {gist_url}")
             print(f"       preview: {preview_url}")
+            if short_url:
+                print(f"       share:   {short_url}")
         except Exception as e:
             print(f"[warn] gist upload failed: {e}")
     else:
