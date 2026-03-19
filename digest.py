@@ -3,7 +3,6 @@
 
 import argparse
 import os
-import re
 import smtplib
 import datetime as dt
 from email.mime.multipart import MIMEMultipart
@@ -55,26 +54,8 @@ MAX_ARTICLES_PER_FEED = 3
 
 # ── RSS fetching ──────────────────────────────────────────────────────────────
 
-def _extract_image(entry):
-    """Try to pull a thumbnail/image URL from an RSS entry."""
-    # media:thumbnail
-    if hasattr(entry, "media_thumbnail") and entry.media_thumbnail:
-        return entry.media_thumbnail[0].get("url", "")
-    # media:content
-    if hasattr(entry, "media_content") and entry.media_content:
-        for mc in entry.media_content:
-            if mc.get("medium") == "image" or mc.get("url", "").split("?")[0].split(".")[-1] in ("jpg", "jpeg", "png", "webp"):
-                return mc.get("url", "")
-    # enclosure
-    if hasattr(entry, "enclosures") and entry.enclosures:
-        for enc in entry.enclosures:
-            if enc.get("type", "").startswith("image/"):
-                return enc.get("href", "")
-    return ""
-
-
 def fetch_articles():
-    """Return {category: [{'title': ..., 'link': ..., 'summary': ..., 'image': ...}, ...]}."""
+    """Return {category: [{'title': ..., 'link': ..., 'summary': ...}, ...]}."""
     articles = {}
     for category, urls in FEEDS.items():
         items = []
@@ -86,7 +67,6 @@ def fetch_articles():
                         "title": entry.get("title", ""),
                         "link": entry.get("link", ""),
                         "summary": entry.get("summary", "")[:300],
-                        "image": _extract_image(entry),
                     })
             except Exception as e:
                 print(f"[warn] failed to fetch {url}: {e}")
@@ -106,13 +86,7 @@ SYSTEM_PROMPT = (
     "5. **Speed Round** — 5-7 punchy one-liners covering the most interesting bits across all categories\n\n"
     "For each section (except Speed Round) write 2-3 short paragraphs. "
     "Be insightful but conversational — like a group chat, not a boardroom. "
-    "Use plain text (no markdown), just section headers in ALL CAPS followed by a blank line.\n\n"
-    "VISUALS: Some articles include an image URL. For each section (except Speed Round), "
-    "pick the single most compelling or relevant image and include it on its own line as:\n"
-    "[IMG: <url>]\n"
-    "Place it right after the section header, before the paragraphs. "
-    "Only use image URLs provided in the articles — never invent URLs. "
-    "If no good image is available for a section, skip it — don't force one."
+    "Use plain text (no markdown), just section headers in ALL CAPS followed by a blank line."
 )
 
 
@@ -121,10 +95,7 @@ def build_prompt(articles):
     for category, items in articles.items():
         parts.append(f"=== {category.upper()} ===")
         for a in items:
-            line = f"- {a['title']}\n  {a['summary']}\n  {a['link']}"
-            if a.get("image"):
-                line += f"\n  image: {a['image']}"
-            parts.append(line)
+            parts.append(f"- {a['title']}\n  {a['summary']}\n  {a['link']}")
         parts.append("")
     return SYSTEM_PROMPT + "\n\nHere are today's articles:\n\n" + "\n".join(parts)
 
@@ -171,27 +142,11 @@ def digest_to_html(raw_text):
     current_section = None
     current_body = []
 
-    img_pattern = re.compile(r"^\[IMG:\s*(https?://\S+)\]$")
-
     def flush():
         nonlocal sections_html, current_section, current_body
         if current_section:
             color = SECTION_COLORS.get(current_section, "#64748b")
-            # Separate image lines from text lines
-            image_html = ""
-            text_lines = []
-            for p in current_body:
-                m = img_pattern.match(p)
-                if m and not image_html:  # only use the first image per section
-                    img_url = m.group(1)
-                    image_html = (
-                        f'<img src="{img_url}" alt="" style="'
-                        f"width:100%;max-height:220px;object-fit:cover;"
-                        f'border-radius:8px;margin-bottom:14px;" />'
-                    )
-                else:
-                    text_lines.append(p)
-            body = "<br>".join(p for p in text_lines if p)
+            body = "<br>".join(p for p in current_body if p)
             sections_html += f"""
             <tr><td style="padding:28px 32px 0;">
                 <div style="
@@ -199,7 +154,6 @@ def digest_to_html(raw_text):
                     color:{color};border-bottom:2px solid {color};
                     padding-bottom:6px;margin-bottom:14px;
                 ">{current_section}</div>
-                {image_html}
                 <div style="font-size:15px;line-height:1.7;color:#d1d5db;">
                     {body}
                 </div>
