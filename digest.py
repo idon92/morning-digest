@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Morning Digest — pulls news from RSS feeds, summarizes via Gemini, emails a polished digest."""
 
-import argparse
 import os
 import smtplib
 import datetime as dt
@@ -77,7 +76,7 @@ def fetch_articles():
 # ── Gemini summarization ──────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = (
-    "You are a sharp, witty friend who actually reads the news. "
+    "You are a witty investment and technology expert who actually reads the news "
     "Given today's articles, write a morning digest with EXACTLY these five sections:\n\n"
     "1. **Money Talk** — finance & markets\n"
     "2. **World Lore** — geopolitics & global affairs\n"
@@ -208,8 +207,8 @@ def digest_to_html(raw_text):
 
 # ── Email sending ─────────────────────────────────────────────────────────────
 
-def send_email(html_body, override_to=None):
-    recipients = override_to if override_to else [e.strip() for e in RECIPIENT_EMAIL.split(",") if e.strip()]
+def send_email(html_body):
+    recipients = [e.strip() for e in RECIPIENT_EMAIL.split(",") if e.strip()]
     today = dt.date.today().strftime("%b %-d")
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"Your Morning Digest — {today}"
@@ -225,53 +224,9 @@ def send_email(html_body, override_to=None):
     print(f"[ok] digest sent to {', '.join(recipients)}")
 
 
-# ── Shareable link via GitHub Gist ─────────────────────────────────────────────
-
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-
-
-def upload_gist(html_body):
-    """Upload HTML to a public GitHub Gist and return the viewable URL."""
-    today = dt.date.today().strftime("%Y-%m-%d")
-    filename = f"morning-digest-{today}.html"
-    resp = requests.post(
-        "https://api.github.com/gists",
-        headers={
-            "Authorization": f"token {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github+json",
-        },
-        json={
-            "description": f"Morning Digest — {today}",
-            "public": True,
-            "files": {filename: {"content": html_body}},
-        },
-        timeout=30,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    raw_url = data["files"][filename]["raw_url"]
-    preview_url = f"https://htmlpreview.github.io/?{raw_url}"
-    short_url = shorten_url(preview_url)
-    return data["html_url"], preview_url, short_url
-
-
-def shorten_url(url):
-    """Shorten a URL via is.gd (free, no auth)."""
-    try:
-        resp = requests.get(
-            "https://is.gd/create.php",
-            params={"format": "simple", "url": url},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.text.strip()
-    except Exception:
-        return None
-
-
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main(override_to=None):
+def main():
     print("[1/4] fetching RSS feeds …")
     articles = fetch_articles()
     total = sum(len(v) for v in articles.values())
@@ -284,57 +239,9 @@ def main(override_to=None):
     print("[3/4] building HTML email …")
     html = digest_to_html(raw_digest)
 
-    # Always save locally
-    local_path = os.path.join(os.path.dirname(__file__), "digest.html")
-    with open(local_path, "w") as f:
-        f.write(html)
-
-    # Upload shareable link
-    if GITHUB_TOKEN:
-        print("[4/5] uploading shareable link …")
-        try:
-            gist_url, preview_url, short_url = upload_gist(html)
-            print(f"       gist:    {gist_url}")
-            print(f"       preview: {preview_url}")
-            if short_url:
-                print(f"       share:   {short_url}")
-        except Exception as e:
-            print(f"[warn] gist upload failed: {e}")
-    else:
-        print("[skip] no GITHUB_TOKEN set, skipping shareable link")
-
-    # Send email
-    print(f"[{'5' if GITHUB_TOKEN else '4'}/{'5' if GITHUB_TOKEN else '4'}] sending email …")
-    try:
-        send_email(html, override_to=override_to)
-    except Exception as e:
-        print(f"[warn] email failed: {e}")
-        print(f"[ok] saved fallback to {local_path}")
-
-
-def send_last(override_to=None):
-    """Send the most recently generated digest.html to recipients."""
-    local_path = os.path.join(os.path.dirname(__file__), "digest.html")
-    if not os.path.exists(local_path):
-        print("[error] no digest.html found — run `python3 digest.py` first to generate one")
-        return
-    with open(local_path) as f:
-        html = f.read()
-    print(f"[1/1] sending last digest …")
-    send_email(html, override_to=override_to)
+    print("[4/4] sending email …")
+    send_email(html)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Morning Digest")
-    parser.add_argument("--send", action="store_true",
-                        help="Email the last generated digest.html to all recipients")
-    parser.add_argument("--to", type=str,
-                        help="Override recipients (comma-separated emails)")
-    args = parser.parse_args()
-
-    target = [e.strip() for e in args.to.split(",") if e.strip()] if args.to else None
-
-    if args.send:
-        send_last(override_to=target)
-    else:
-        main(override_to=target)
+    main()
