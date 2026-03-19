@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Morning Digest — pulls news from RSS feeds, summarizes via Gemini, emails a polished digest."""
 
+import argparse
 import os
 import re
 import smtplib
@@ -357,5 +358,25 @@ def main():
         print(f"[ok] saved fallback to {local_path}")
 
 
+def send_last():
+    """Send the most recently generated digest.html to all recipients."""
+    local_path = os.path.join(os.path.dirname(__file__), "digest.html")
+    if not os.path.exists(local_path):
+        print("[error] no digest.html found — run `python3 digest.py` first to generate one")
+        return
+    with open(local_path) as f:
+        html = f.read()
+    print(f"[1/1] sending last digest to recipients …")
+    send_email(html)
+
+
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Morning Digest")
+    parser.add_argument("--send", action="store_true",
+                        help="Email the last generated digest.html to all recipients")
+    args = parser.parse_args()
+
+    if args.send:
+        send_last()
+    else:
+        main()
