@@ -208,8 +208,8 @@ def digest_to_html(raw_text):
 
 # ── Email sending ─────────────────────────────────────────────────────────────
 
-def send_email(html_body):
-    recipients = [e.strip() for e in RECIPIENT_EMAIL.split(",") if e.strip()]
+def send_email(html_body, override_to=None):
+    recipients = override_to if override_to else [e.strip() for e in RECIPIENT_EMAIL.split(",") if e.strip()]
     today = dt.date.today().strftime("%b %-d")
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"Your Morning Digest — {today}"
@@ -271,7 +271,7 @@ def shorten_url(url):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main():
+def main(override_to=None):
     print("[1/4] fetching RSS feeds …")
     articles = fetch_articles()
     total = sum(len(v) for v in articles.values())
@@ -306,31 +306,35 @@ def main():
     # Send email
     print(f"[{'5' if GITHUB_TOKEN else '4'}/{'5' if GITHUB_TOKEN else '4'}] sending email …")
     try:
-        send_email(html)
+        send_email(html, override_to=override_to)
     except Exception as e:
         print(f"[warn] email failed: {e}")
         print(f"[ok] saved fallback to {local_path}")
 
 
-def send_last():
-    """Send the most recently generated digest.html to all recipients."""
+def send_last(override_to=None):
+    """Send the most recently generated digest.html to recipients."""
     local_path = os.path.join(os.path.dirname(__file__), "digest.html")
     if not os.path.exists(local_path):
         print("[error] no digest.html found — run `python3 digest.py` first to generate one")
         return
     with open(local_path) as f:
         html = f.read()
-    print(f"[1/1] sending last digest to recipients …")
-    send_email(html)
+    print(f"[1/1] sending last digest …")
+    send_email(html, override_to=override_to)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Morning Digest")
     parser.add_argument("--send", action="store_true",
                         help="Email the last generated digest.html to all recipients")
+    parser.add_argument("--to", type=str,
+                        help="Override recipients (comma-separated emails)")
     args = parser.parse_args()
 
+    target = [e.strip() for e in args.to.split(",") if e.strip()] if args.to else None
+
     if args.send:
-        send_last()
+        send_last(override_to=target)
     else:
-        main()
+        main(override_to=target)
