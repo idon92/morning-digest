@@ -42,9 +42,10 @@ FEEDS = {
         "https://www.theverge.com/rss/index.xml",
         "https://www.wired.com/feed/rss",
     ],
-    "Creator Economy": [
-        "https://digiday.com/feed/",
-        "https://www.socialmediatoday.com/feed/",
+    "AI / Data Update": [
+        "https://nathanlambertai.substack.com/feed",
+        "https://sebastianraschka.substack.com/feed",
+        "https://www.deeplearning.ai/the-batch/rss/",
     ],
 }
 
@@ -81,7 +82,7 @@ SYSTEM_PROMPT = (
     "1. **Money Talk** — finance & markets\n"
     "2. **World Lore** — geopolitics & global affairs\n"
     "3. **Tech Tea** — technology & innovation\n"
-    "4. **Creator Szn** — creator economy & social platforms\n"
+    "4. **Data Dive** — AI research, ML engineering & data science\n"
     "5. **Speed Round** — 5-7 punchy one-liners covering the most interesting bits across all categories\n\n"
     "For each section (except Speed Round) write 2-3 short paragraphs. "
     "Be insightful but conversational — like a group chat, not a boardroom. "
@@ -129,7 +130,7 @@ SECTION_COLORS = {
     "MONEY TALK": "#10b981",
     "WORLD LORE": "#6366f1",
     "TECH TEA": "#f59e0b",
-    "CREATOR SZN": "#ec4899",
+    "DATA DIVE": "#ec4899",
     "SPEED ROUND": "#8b5cf6",
 }
 
