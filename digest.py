@@ -47,6 +47,10 @@ FEEDS = {
         "https://sebastianraschka.substack.com/feed",
         "https://www.deeplearning.ai/the-batch/rss/",
     ],
+    "Catalyst Calendar": [
+        "https://www.federalreserve.gov/feeds/press_all.xml",
+        "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258",
+    ],
 }
 
 MAX_ARTICLES_PER_FEED = 3
@@ -78,12 +82,13 @@ def fetch_articles():
 
 SYSTEM_PROMPT = (
     "You are a witty investment and technology expert who actually reads the news "
-    "Given today's articles, write a morning digest with EXACTLY these five sections:\n\n"
+    "Given today's articles, write a morning digest with EXACTLY these six sections:\n\n"
     "1. **Money Talk** — finance & markets\n"
     "2. **World Lore** — geopolitics & global affairs\n"
     "3. **Tech Tea** — technology & innovation\n"
     "4. **Data Dive** — AI research, ML engineering & data science\n"
-    "5. **Speed Round** — 5-7 punchy one-liners covering the most interesting bits across all categories\n\n"
+    "5. **Catalyst Calendar** — upcoming economic data releases, Fed activity, and notable report publishings that could move markets\n"
+    "6. **Speed Round** — 5-7 punchy one-liners covering the most interesting bits across all categories\n\n"
     "For each section (except Speed Round) write 2-3 short paragraphs. "
     "Be insightful but conversational — like a group chat, not a boardroom. "
     "Use plain text (no markdown), just section headers in ALL CAPS followed by a blank line."
@@ -131,6 +136,7 @@ SECTION_COLORS = {
     "WORLD LORE": "#6366f1",
     "TECH TEA": "#f59e0b",
     "DATA DIVE": "#ec4899",
+    "CATALYST CALENDAR": "#ef4444",
     "SPEED ROUND": "#8b5cf6",
 }
 
