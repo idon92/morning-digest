@@ -106,7 +106,7 @@ def build_prompt(articles):
 
 
 def call_gemini(prompt):
-    models = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.5-flash"]
+    models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"]
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
     for model in models:
@@ -116,9 +116,10 @@ def call_gemini(prompt):
         )
         for attempt in range(3):
             resp = requests.post(url, json=payload, timeout=90)
-            if resp.status_code == 429:
+            if resp.status_code in (429, 503):
                 wait = 2 ** attempt * 5
-                print(f"       rate-limited on {model}, retrying in {wait}s …")
+                reason = "rate-limited" if resp.status_code == 429 else "unavailable"
+                print(f"       {reason} on {model}, retrying in {wait}s …")
                 time.sleep(wait)
                 continue
             resp.raise_for_status()
