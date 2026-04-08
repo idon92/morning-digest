@@ -106,7 +106,7 @@ def build_prompt(articles):
 
 
 def call_gemini(prompt):
-    models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"]
+    models = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
     for model in models:
@@ -114,14 +114,27 @@ def call_gemini(prompt):
             f"https://generativelanguage.googleapis.com/v1beta/models/"
             f"{model}:generateContent?key={GEMINI_API_KEY}"
         )
-        for attempt in range(3):
+        for attempt in range(5):
             resp = requests.post(url, json=payload, timeout=90)
             if resp.status_code in (429, 503):
                 wait = 2 ** attempt * 5
                 reason = "rate-limited" if resp.status_code == 429 else "unavailable"
-                print(f"       {reason} on {model}, retrying in {wait}s …")
+                detail = ""
+                try:
+                    detail = resp.json().get("error", {}).get("message", "")
+                except Exception:
+                    detail = resp.text[:200]
+                print(f"       {reason} on {model} ({resp.status_code}), retrying in {wait}s …")
+                print(f"       detail: {detail}")
                 time.sleep(wait)
                 continue
+            if resp.status_code != 200:
+                detail = ""
+                try:
+                    detail = resp.json().get("error", {}).get("message", "")
+                except Exception:
+                    detail = resp.text[:200]
+                print(f"       error {resp.status_code} on {model}: {detail}")
             resp.raise_for_status()
             data = resp.json()
             return data["candidates"][0]["content"]["parts"][0]["text"]
@@ -218,18 +231,18 @@ def digest_to_html(raw_text):
 def send_email(html_body):
     recipients = [e.strip() for e in RECIPIENT_EMAIL.split(",") if e.strip()]
     today = dt.date.today().strftime("%b %-d")
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Your Morning Digest — {today}"
-    msg["From"] = GMAIL_ADDRESS
-    msg["To"] = ", ".join(recipients)
-    msg.attach(MIMEText("Your email client doesn't support HTML.", "plain"))
-    msg.attach(MIMEText(html_body, "html"))
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-        server.sendmail(GMAIL_ADDRESS, recipients, msg.as_string())
-
-    print(f"[ok] digest sent to {', '.join(recipients)}")
+        for recipient in recipients:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = f"Your Morning Digest — {today}"
+            msg["From"] = GMAIL_ADDRESS
+            msg["To"] = recipient
+            msg.attach(MIMEText("Your email client doesn't support HTML.", "plain"))
+            msg.attach(MIMEText(html_body, "html"))
+            server.sendmail(GMAIL_ADDRESS, [recipient], msg.as_string())
+            print(f"[ok] digest sent to {recipient}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

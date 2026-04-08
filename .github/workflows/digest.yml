@@ -2,9 +2,9 @@ name: Morning Digest
 
 on:
   schedule:
-    # 7 AM Pacific = 14:00 UTC (PDT) / 15:00 UTC (PST)
-    # Using 14:00 for daylight saving; runs ~1 hr early in winter
-    - cron: "0 14 * * *"
+    # 7:30 AM Pacific = 14:30 UTC (PDT) / 15:30 UTC (PST)
+    # Using 14:30 for daylight saving; runs ~1 hr early in winter
+    - cron: "30 14 * * *"
   workflow_dispatch: # allow manual trigger from GitHub UI
 
 jobs:
