@@ -10,6 +10,10 @@ on:
 jobs:
   send-digest:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false  # broadcast and personal are independent — one failing shouldn't cancel the other
+      matrix:
+        audience: [broadcast, personal]
     steps:
       - uses: actions/checkout@v5
 
@@ -20,11 +24,11 @@ jobs:
       - name: Install dependencies
         run: pip install feedparser requests python-dotenv
 
-      - name: Run digest
+      - name: Run digest (${{ matrix.audience }})
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
           GITHUB_TOKEN: ${{ secrets.GH_GIST_TOKEN }}
-        run: python digest.py
+        run: python digest.py --audience ${{ matrix.audience }}

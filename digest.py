@@ -2,6 +2,7 @@
 """Morning Digest — pulls news from RSS feeds, summarizes via Gemini, emails a polished digest."""
 
 import os
+import argparse
 import smtplib
 import datetime as dt
 from email.mime.multipart import MIMEMultipart
@@ -21,6 +22,7 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 GMAIL_ADDRESS = os.environ["GMAIL_ADDRESS"]
 GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
 RECIPIENT_EMAIL = os.environ["RECIPIENT_EMAIL"]
+PERSONAL_EMAIL = os.environ.get("PERSONAL_EMAIL", "ianisaiahdon@gmail.com")
 
 FEEDS = {
     "Finance": [
@@ -53,15 +55,29 @@ FEEDS = {
     ],
 }
 
+# Frontier-lab feeds for the personal-only "Frontier Watch" section.
+# OpenAI and DeepMind expose native RSS; the rest are pulled from the
+# Olshansk/rss-feeds community mirror (those labs publish no native feed).
+# Mercor and Micro1 have no RSS source available — skipped in v1.
+FRONTIER_LAB_FEEDS = [
+    "https://openai.com/news/rss.xml",
+    "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_anthropic_news.xml",
+    "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_anthropic_research.xml",
+    "https://deepmind.google/blog/rss.xml",
+    "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_meta_ai.xml",
+    "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_xainews.xml",
+    "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_blogsurgeai.xml",
+]
+
 MAX_ARTICLES_PER_FEED = 3
 
 
 # ── RSS fetching ──────────────────────────────────────────────────────────────
 
-def fetch_articles():
+def fetch_articles(feeds):
     """Return {category: [{'title': ..., 'link': ..., 'summary': ...}, ...]}."""
     articles = {}
-    for category, urls in FEEDS.items():
+    for category, urls in feeds.items():
         items = []
         for url in urls:
             try:
@@ -80,29 +96,40 @@ def fetch_articles():
 
 # ── Gemini summarization ──────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = (
-    "You are a witty investment and technology expert who actually reads the news "
-    "Given today's articles, write a morning digest with EXACTLY these six sections:\n\n"
-    "1. **Money Talk** — finance & markets\n"
-    "2. **World Lore** — geopolitics & global affairs\n"
-    "3. **Tech Tea** — technology & innovation\n"
-    "4. **Data Dive** — AI research, ML engineering & data science\n"
-    "5. **Catalyst Calendar** — upcoming economic data releases, Fed activity, and notable report publishings that could move markets\n"
-    "6. **Speed Round** — 5-7 punchy one-liners covering the most interesting bits across all categories\n\n"
-    "For each section (except Speed Round) write 2-3 short paragraphs. "
-    "Be insightful but conversational — like a group chat, not a boardroom. "
-    "Use plain text (no markdown), just section headers in ALL CAPS followed by a blank line."
-)
+def system_prompt(include_frontier):
+    sections = ["**Money Talk** — finance & markets"]
+    if include_frontier:
+        sections.append(
+            "**Frontier Watch** — biggest releases & research from frontier AI labs "
+            "(OpenAI, Anthropic, DeepMind, Meta AI, xAI)"
+        )
+    sections.extend([
+        "**World Lore** — geopolitics & global affairs",
+        "**Tech Tea** — technology & innovation",
+        "**Data Dive** — AI research, ML engineering & data science",
+        "**Catalyst Calendar** — upcoming economic data releases, Fed activity, "
+        "and notable report publishings that could move markets",
+        "**Speed Round** — 5-7 punchy one-liners covering the most interesting bits across all categories",
+    ])
+    numbered = "\n".join(f"{i+1}. {s}" for i, s in enumerate(sections))
+    return (
+        "You are a witty investment and technology expert who actually reads the news. "
+        f"Given today's articles, write a morning digest with EXACTLY these {len(sections)} sections:\n\n"
+        f"{numbered}\n\n"
+        "For each section (except Speed Round) write 2-3 short paragraphs. "
+        "Be insightful but conversational — like a group chat, not a boardroom. "
+        "Use plain text (no markdown), just section headers in ALL CAPS followed by a blank line."
+    )
 
 
-def build_prompt(articles):
+def build_prompt(articles, include_frontier):
     parts = []
     for category, items in articles.items():
         parts.append(f"=== {category.upper()} ===")
         for a in items:
             parts.append(f"- {a['title']}\n  {a['summary']}\n  {a['link']}")
         parts.append("")
-    return SYSTEM_PROMPT + "\n\nHere are today's articles:\n\n" + "\n".join(parts)
+    return system_prompt(include_frontier) + "\n\nHere are today's articles:\n\n" + "\n".join(parts)
 
 
 def call_gemini(prompt):
@@ -147,6 +174,7 @@ def call_gemini(prompt):
 
 SECTION_COLORS = {
     "MONEY TALK": "#10b981",
+    "FRONTIER WATCH": "#06b6d4",
     "WORLD LORE": "#6366f1",
     "TECH TEA": "#f59e0b",
     "DATA DIVE": "#ec4899",
@@ -228,8 +256,7 @@ def digest_to_html(raw_text):
 
 # ── Email sending ─────────────────────────────────────────────────────────────
 
-def send_email(html_body):
-    recipients = [e.strip() for e in RECIPIENT_EMAIL.split(",") if e.strip()]
+def send_email(html_body, recipients):
     today = dt.date.today().strftime("%b %-d")
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
@@ -248,20 +275,38 @@ def send_email(html_body):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    print("[1/4] fetching RSS feeds …")
-    articles = fetch_articles()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--audience", choices=["broadcast", "personal"], default="broadcast")
+    args = parser.parse_args()
+    is_personal = args.audience == "personal"
+
+    # Personal digest gets a Frontier Watch section inserted right after Finance.
+    feeds = {}
+    for category, urls in FEEDS.items():
+        feeds[category] = urls
+        if is_personal and category == "Finance":
+            feeds["Frontier Watch"] = FRONTIER_LAB_FEEDS
+
+    recipients = (
+        [PERSONAL_EMAIL]
+        if is_personal
+        else [e.strip() for e in RECIPIENT_EMAIL.split(",") if e.strip()]
+    )
+
+    print(f"[1/4] fetching RSS feeds ({args.audience}) …")
+    articles = fetch_articles(feeds)
     total = sum(len(v) for v in articles.values())
     print(f"       pulled {total} articles across {len(articles)} categories")
 
     print("[2/4] sending to Gemini …")
-    prompt = build_prompt(articles)
+    prompt = build_prompt(articles, include_frontier=is_personal)
     raw_digest = call_gemini(prompt)
 
     print("[3/4] building HTML email …")
     html = digest_to_html(raw_digest)
 
-    print("[4/4] sending email …")
-    send_email(html)
+    print(f"[4/4] sending email to {len(recipients)} recipient(s) …")
+    send_email(html, recipients)
 
 
 if __name__ == "__main__":
