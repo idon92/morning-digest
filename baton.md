@@ -40,3 +40,4 @@ Daily 7 AM PT email digest. Pulls RSS → Gemini summarizes → HTML email via G
 - 2026-05-02: User installed Homebrew. Agent installed `gh` via `/opt/homebrew/bin/brew install gh`. Auth still pending — user to run `gh auth login` interactively, then agent retries push.
 - 2026-05-02: User authenticated `gh` as `idon92`; agent pushed `ad7dedc` to `origin/main`. Audience split is now live; first production run is tomorrow's 7 AM PT cron.
 - 2026-05-02: Triggered `workflow_dispatch` (run 25265045555) — both broadcast and personal jobs succeeded. Audience split is fully verified in production.
+- 2026-05-02: Committed and pushed `baton.md` itself (`47956a6`) so the handoff doc is preserved in git.
