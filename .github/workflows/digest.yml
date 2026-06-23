@@ -30,5 +30,6 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          PERSONAL_EMAIL: ${{ secrets.PERSONAL_EMAIL }}
           GITHUB_TOKEN: ${{ secrets.GH_GIST_TOKEN }}
         run: python digest.py --audience ${{ matrix.audience }}
