@@ -13,7 +13,7 @@ Daily 7 AM PT email digest. Pulls RSS → Gemini summarizes → HTML email via G
 **Shipped (HEAD = `ad7dedc`):** audience-split digest. CI runs a `[broadcast, personal]` matrix with `fail-fast: false`.
 - `--audience {broadcast,personal}` CLI flag in `main()`.
 - Personal audience injects a **Frontier Watch** section right after Finance (OpenAI/Anthropic/DeepMind/Meta AI/xAI feeds — Anthropic + Meta + xAI come from the Olshansk/rss-feeds mirror since those labs don't publish native RSS). Mercor/Micro1 skipped — no RSS available.
-- Personal sends to `PERSONAL_EMAIL` (defaults to `ianisaiahdon@gmail.com`); broadcast keeps the existing `RECIPIENT_EMAIL` list.
+- Personal sends to `PERSONAL_EMAIL` (defaults to `ianisaiahdon@gmail.com`); broadcast uses `RECIPIENT_EMAIL` minus `PERSONAL_EMAIL` (owner gets personal-only by default; pass `--include-personal-in-broadcast` to override).
 - `system_prompt(include_frontier)` builds a 6- or 7-section prompt dynamically.
 - Verified locally on 2026-05-01 and end-to-end via `workflow_dispatch` on 2026-05-02 (run 25265045555 — both matrix jobs green, ~40s each).
 
@@ -41,3 +41,5 @@ Daily 7 AM PT email digest. Pulls RSS → Gemini summarizes → HTML email via G
 - 2026-05-02: User authenticated `gh` as `idon92`; agent pushed `ad7dedc` to `origin/main`. Audience split is now live; first production run is tomorrow's 7 AM PT cron.
 - 2026-05-02: Triggered `workflow_dispatch` (run 25265045555) — both broadcast and personal jobs succeeded. Audience split is fully verified in production.
 - 2026-05-02: Committed and pushed `baton.md` itself (`47956a6`) so the handoff doc is preserved in git.
+- 2026-05-04: Broadcast now filters out `PERSONAL_EMAIL` by default; added `--include-personal-in-broadcast` override.
+- 2026-06-23: Switched sender to `ian.news.aq@gmail.com`; new broadcast list (jack, amanda, siddharth/ian/jasper @afterquery). Updated `.env` + 3 GH secrets. Committed/pushed the `--include-personal-in-broadcast` change. Note: active `gh` account must be `idon92` (owner) to manage secrets — `iidon92` lacks admin.

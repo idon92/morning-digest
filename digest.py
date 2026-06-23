@@ -277,6 +277,11 @@ def send_email(html_body, recipients):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--audience", choices=["broadcast", "personal"], default="broadcast")
+    parser.add_argument(
+        "--include-personal-in-broadcast",
+        action="store_true",
+        help="Send the broadcast copy to PERSONAL_EMAIL too. Off by default — the owner gets the personal copy only.",
+    )
     args = parser.parse_args()
     is_personal = args.audience == "personal"
 
@@ -287,11 +292,12 @@ def main():
         if is_personal and category == "Finance":
             feeds["Frontier Watch"] = FRONTIER_LAB_FEEDS
 
-    recipients = (
-        [PERSONAL_EMAIL]
-        if is_personal
-        else [e.strip() for e in RECIPIENT_EMAIL.split(",") if e.strip()]
-    )
+    if is_personal:
+        recipients = [PERSONAL_EMAIL]
+    else:
+        recipients = [e.strip() for e in RECIPIENT_EMAIL.split(",") if e.strip()]
+        if not args.include_personal_in_broadcast:
+            recipients = [r for r in recipients if r.lower() != PERSONAL_EMAIL.lower()]
 
     print(f"[1/4] fetching RSS feeds ({args.audience}) …")
     articles = fetch_articles(feeds)
