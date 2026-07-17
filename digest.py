@@ -3,6 +3,7 @@
 
 import os
 import argparse
+import calendar
 import smtplib
 import datetime as dt
 from email.mime.multipart import MIMEMultipart
@@ -18,11 +19,20 @@ load_dotenv()
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]  # fallback summarizer
+# Kimi K3 (Moonshot) is the primary summarizer when a key is present.
+KIMI_API_KEY = os.environ.get("KIMI_API_KEY", "")
+KIMI_BASE_URL = os.environ.get("KIMI_BASE_URL", "https://api.moonshot.ai/v1")
+KIMI_MODEL = os.environ.get("KIMI_MODEL", "kimi-k3")
 GMAIL_ADDRESS = os.environ["GMAIL_ADDRESS"]
 GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
 RECIPIENT_EMAIL = os.environ["RECIPIENT_EMAIL"]
-PERSONAL_EMAIL = os.environ.get("PERSONAL_EMAIL", "ianisaiahdon@gmail.com")
+# Comma-separated, like RECIPIENT_EMAIL.
+PERSONAL_EMAILS = [
+    e.strip()
+    for e in os.environ.get("PERSONAL_EMAIL", "ianisaiahdon@gmail.com").split(",")
+    if e.strip()
+]
 
 FEEDS = {
     "Finance": [
@@ -45,9 +55,17 @@ FEEDS = {
         "https://www.wired.com/feed/rss",
     ],
     "AI / Data Update": [
-        "https://nathanlambertai.substack.com/feed",
+        "https://www.interconnects.ai/feed",
         "https://sebastianraschka.substack.com/feed",
-        "https://www.deeplearning.ai/the-batch/rss/",
+        "https://simonwillison.net/atom/everything/",
+    ],
+    # Orgs that produce benchmark/eval numbers, not just commentary.
+    # (Epoch's Gradient Updates substack — epoch.ai itself has no feed.)
+    "Benchmark Beat": [
+        "https://epochai.substack.com/feed",
+        "https://arcprize.org/feed.xml",
+        "https://metr.org/feed.xml",
+        "https://arena.ai/blog/rss/",
     ],
     "Catalyst Calendar": [
         "https://www.federalreserve.gov/feeds/press_all.xml",
@@ -67,22 +85,40 @@ FRONTIER_LAB_FEEDS = [
     "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_meta_ai.xml",
     "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_xainews.xml",
     "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_blogsurgeai.xml",
+    "https://mistral.ai/rss.xml",
 ]
 
 MAX_ARTICLES_PER_FEED = 3
+MAX_ARTICLE_AGE_HOURS = 36
+# Eval orgs publish ~weekly; a daily-sized window would leave the section empty most days.
+CATEGORY_MAX_AGE_HOURS = {"Benchmark Beat": 72}
 
 
 # ── RSS fetching ──────────────────────────────────────────────────────────────
 
 def fetch_articles(feeds):
-    """Return {category: [{'title': ..., 'link': ..., 'summary': ...}, ...]}."""
+    """Return {category: [{'title': ..., 'link': ..., 'summary': ...}, ...]}, freshest first."""
     articles = {}
     for category, urls in feeds.items():
+        max_age = CATEGORY_MAX_AGE_HOURS.get(category, MAX_ARTICLE_AGE_HOURS)
+        cutoff = time.time() - max_age * 3600
         items = []
         for url in urls:
             try:
                 feed = feedparser.parse(url)
-                for entry in feed.entries[:MAX_ARTICLES_PER_FEED]:
+                if not feed.entries:
+                    # Some sites fake-200 an HTML shell on rss paths; don't treat as quiet day.
+                    print(f"[warn] no entries from {url} (bozo={getattr(feed, 'bozo', '?')})")
+                    continue
+                dated = []
+                for entry in feed.entries:
+                    ts = entry.get("published_parsed") or entry.get("updated_parsed")
+                    ts = calendar.timegm(ts) if ts else 0
+                    if 0 < ts < cutoff:
+                        continue  # stale; undated (ts=0) kept but ranked last
+                    dated.append((ts, entry))
+                dated.sort(key=lambda pair: pair[0], reverse=True)
+                for _, entry in dated[:MAX_ARTICLES_PER_FEED]:
                     items.append({
                         "title": entry.get("title", ""),
                         "link": entry.get("link", ""),
@@ -101,9 +137,10 @@ def system_prompt(include_frontier):
     if include_frontier:
         sections.append(
             "**Frontier Watch** — biggest releases & research from frontier AI labs "
-            "(OpenAI, Anthropic, DeepMind, Meta AI, xAI)"
+            "(OpenAI, Anthropic, DeepMind, Meta AI, xAI, Mistral)"
         )
     sections.extend([
+        "**Benchmark Beat** — new AI benchmark results, eval releases, and leaderboard moves",
         "**World Lore** — geopolitics & global affairs",
         "**Tech Tea** — technology & innovation",
         "**Data Dive** — AI research, ML engineering & data science",
@@ -116,8 +153,16 @@ def system_prompt(include_frontier):
         "You are a witty investment and technology expert who actually reads the news. "
         f"Given today's articles, write a morning digest with EXACTLY these {len(sections)} sections:\n\n"
         f"{numbered}\n\n"
+        "Context on the mid-2026 AI benchmark landscape: frontier model releases are judged "
+        "primarily on agentic evals — SWE-Bench Pro, Terminal-Bench 2.1, GDPval-AA, MCP Atlas, "
+        "Agents' Last Exam, JobBench, BrowseComp, OSWorld-Verified, Toolathlon, Humanity's Last "
+        "Exam (with tools), ARC-AGI-3 — plus aggregate trackers (Artificial Analysis Intelligence "
+        "Index, Epoch ECI, METR time horizons). When an article cites benchmark scores, include "
+        "the exact numbers and who they beat. Never invent, round, or extrapolate a score that "
+        "is not in the article text.\n\n"
         "For each section (except Speed Round) write 2-3 short paragraphs. "
         "Be insightful but conversational — like a group chat, not a boardroom. "
+        "If a category has no fresh articles, write one line saying it's a quiet day there. "
         "Use plain text (no markdown), just section headers in ALL CAPS followed by a blank line."
     )
 
@@ -126,10 +171,50 @@ def build_prompt(articles, include_frontier):
     parts = []
     for category, items in articles.items():
         parts.append(f"=== {category.upper()} ===")
+        if not items:
+            parts.append(f"(no fresh articles in the last {MAX_ARTICLE_AGE_HOURS} hours)")
         for a in items:
             parts.append(f"- {a['title']}\n  {a['summary']}\n  {a['link']}")
         parts.append("")
     return system_prompt(include_frontier) + "\n\nHere are today's articles:\n\n" + "\n".join(parts)
+
+
+def call_kimi(prompt):
+    url = f"{KIMI_BASE_URL}/chat/completions"
+    headers = {"Authorization": f"Bearer {KIMI_API_KEY}"}
+    # K3 fixes temperature/top_p server-side — Moonshot docs say omit sampling params.
+    payload = {
+        "model": KIMI_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    for attempt in range(4):
+        resp = requests.post(url, json=payload, headers=headers, timeout=180)
+        if resp.status_code in (429, 503):
+            wait = 2 ** attempt * 5
+            print(f"       {resp.status_code} from {KIMI_MODEL}, retrying in {wait}s …")
+            time.sleep(wait)
+            continue
+        if resp.status_code != 200:
+            try:
+                detail = resp.json().get("error", {}).get("message", "")
+            except Exception:
+                detail = resp.text[:200]
+            print(f"       error {resp.status_code} on {KIMI_MODEL}: {detail}")
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+    raise RuntimeError(f"{KIMI_MODEL} exhausted retries")
+
+
+def call_llm(prompt):
+    """Kimi K3 is primary; Gemini is the emergency fallback so the cron never sends nothing."""
+    if KIMI_API_KEY:
+        try:
+            return call_kimi(prompt)
+        except Exception as e:
+            print(f"[warn] Kimi failed ({e}); falling back to Gemini")
+    else:
+        print("[warn] KIMI_API_KEY not set; using Gemini")
+    return call_gemini(prompt)
 
 
 def call_gemini(prompt):
@@ -175,6 +260,7 @@ def call_gemini(prompt):
 SECTION_COLORS = {
     "MONEY TALK": "#10b981",
     "FRONTIER WATCH": "#06b6d4",
+    "BENCHMARK BEAT": "#14b8a6",
     "WORLD LORE": "#6366f1",
     "TECH TEA": "#f59e0b",
     "DATA DIVE": "#ec4899",
@@ -293,20 +379,21 @@ def main():
             feeds["Frontier Watch"] = FRONTIER_LAB_FEEDS
 
     if is_personal:
-        recipients = [PERSONAL_EMAIL]
+        recipients = PERSONAL_EMAILS
     else:
         recipients = [e.strip() for e in RECIPIENT_EMAIL.split(",") if e.strip()]
         if not args.include_personal_in_broadcast:
-            recipients = [r for r in recipients if r.lower() != PERSONAL_EMAIL.lower()]
+            personal = {p.lower() for p in PERSONAL_EMAILS}
+            recipients = [r for r in recipients if r.lower() not in personal]
 
     print(f"[1/4] fetching RSS feeds ({args.audience}) …")
     articles = fetch_articles(feeds)
     total = sum(len(v) for v in articles.values())
     print(f"       pulled {total} articles across {len(articles)} categories")
 
-    print("[2/4] sending to Gemini …")
+    print("[2/4] summarizing …")
     prompt = build_prompt(articles, include_frontier=is_personal)
-    raw_digest = call_gemini(prompt)
+    raw_digest = call_llm(prompt)
 
     print("[3/4] building HTML email …")
     html = digest_to_html(raw_digest)
