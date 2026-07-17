@@ -70,8 +70,8 @@ FEEDS = {
     ],
 }
 
-# Frontier-lab feeds for the personal-only "Frontier Watch" section.
-# OpenAI and DeepMind expose native RSS; the rest are pulled from the
+# Frontier-lab feeds for the "Frontier Watch" section (all editions).
+# OpenAI, DeepMind and Mistral expose native RSS; the rest are pulled from the
 # Olshansk/rss-feeds community mirror (those labs publish no native feed).
 # Mercor and Micro1 have no RSS source available — skipped in v1.
 FRONTIER_LAB_FEEDS = [
@@ -129,19 +129,16 @@ def fetch_articles(feeds):
 
 # ── Gemini summarization ──────────────────────────────────────────────────────
 
-def system_prompt(include_frontier):
-    sections = ["**Money Talk** — finance & markets"]
-    if include_frontier:
-        sections.append(
-            "**Frontier Watch** — biggest releases & research from frontier AI labs "
-            "(OpenAI, Anthropic, DeepMind, Meta AI, xAI, Mistral)"
-        )
-    sections.extend([
+def system_prompt():
+    sections = [
+        "**Money Talk** — finance & markets",
+        "**Frontier Watch** — biggest releases & research from frontier AI labs "
+        "(OpenAI, Anthropic, DeepMind, Meta AI, xAI, Mistral)",
         "**Benchmark Beat** — new AI benchmark results, eval releases, and leaderboard moves",
         "**World Lore** — geopolitics & global affairs",
         "**Tech Tea** — technology & innovation",
         "**Data Dive** — AI research, ML engineering & data science",
-    ])
+    ]
     numbered = "\n".join(f"{i+1}. {s}" for i, s in enumerate(sections))
     return (
         "You are a witty investment and technology expert who actually reads the news. "
@@ -161,7 +158,7 @@ def system_prompt(include_frontier):
     )
 
 
-def build_prompt(articles, include_frontier):
+def build_prompt(articles):
     parts = []
     for category, items in articles.items():
         parts.append(f"=== {category.upper()} ===")
@@ -170,7 +167,7 @@ def build_prompt(articles, include_frontier):
         for a in items:
             parts.append(f"- {a['title']}\n  {a['summary']}\n  {a['link']}")
         parts.append("")
-    return system_prompt(include_frontier) + "\n\nHere are today's articles:\n\n" + "\n".join(parts)
+    return system_prompt() + "\n\nHere are today's articles:\n\n" + "\n".join(parts)
 
 
 def call_kimi(prompt):
@@ -376,11 +373,12 @@ def main():
     args = parser.parse_args()
     is_personal = args.audience == "personal"
 
-    # Personal digest gets a Frontier Watch section inserted right after Finance.
+    # The former personal edition is the only edition now: Frontier Watch for everyone.
+    # --audience only routes recipients (broadcast list vs PERSONAL_EMAIL).
     feeds = {}
     for category, urls in FEEDS.items():
         feeds[category] = urls
-        if is_personal and category == "Finance":
+        if category == "Finance":
             feeds["Frontier Watch"] = FRONTIER_LAB_FEEDS
 
     if is_personal:
@@ -397,7 +395,7 @@ def main():
     print(f"       pulled {total} articles across {len(articles)} categories")
 
     print("[2/4] summarizing …")
-    prompt = build_prompt(articles, include_frontier=is_personal)
+    prompt = build_prompt(articles)
     raw_digest = call_llm(prompt)
 
     print("[3/4] building HTML email …")
