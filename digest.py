@@ -4,6 +4,7 @@
 import os
 import argparse
 import calendar
+import json
 import smtplib
 import datetime as dt
 from email.mime.multipart import MIMEMultipart
@@ -176,25 +177,38 @@ def call_kimi(prompt):
     url = f"{KIMI_BASE_URL}/chat/completions"
     headers = {"Authorization": f"Bearer {KIMI_API_KEY}"}
     # K3 fixes temperature/top_p server-side — Moonshot docs say omit sampling params.
+    # Streamed because K3's always-on reasoning outlasts proxy buffering timeouts (CF 524).
     payload = {
         "model": KIMI_MODEL,
         "messages": [{"role": "user", "content": prompt}],
+        "stream": True,
     }
     for attempt in range(4):
-        resp = requests.post(url, json=payload, headers=headers, timeout=180)
-        if resp.status_code in (429, 503):
+        resp = requests.post(url, json=payload, headers=headers, timeout=(30, 300), stream=True)
+        if resp.status_code in (429, 503, 524):
             wait = 2 ** attempt * 5
             print(f"       {resp.status_code} from {KIMI_MODEL}, retrying in {wait}s …")
             time.sleep(wait)
             continue
         if resp.status_code != 200:
-            try:
-                detail = resp.json().get("error", {}).get("message", "")
-            except Exception:
-                detail = resp.text[:200]
-            print(f"       error {resp.status_code} on {KIMI_MODEL}: {detail}")
+            print(f"       error {resp.status_code} on {KIMI_MODEL}: {resp.text[:200]}")
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        chunks = []
+        for line in resp.iter_lines():
+            if not line.startswith(b"data: "):
+                continue
+            data = line[len(b"data: "):]
+            if data == b"[DONE]":
+                break
+            try:
+                delta = json.loads(data)["choices"][0]["delta"]
+            except (ValueError, KeyError, IndexError):
+                continue  # usage/keepalive chunks
+            chunks.append(delta.get("content") or "")
+        text = "".join(chunks).strip()
+        if text:
+            return text
+        print(f"       empty stream from {KIMI_MODEL}, retrying …")
     raise RuntimeError(f"{KIMI_MODEL} exhausted retries")
 
 
