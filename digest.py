@@ -67,10 +67,6 @@ FEEDS = {
         "https://metr.org/feed.xml",
         "https://arena.ai/blog/rss/",
     ],
-    "Catalyst Calendar": [
-        "https://www.federalreserve.gov/feeds/press_all.xml",
-        "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258",
-    ],
 }
 
 # Frontier-lab feeds for the personal-only "Frontier Watch" section.
@@ -144,9 +140,6 @@ def system_prompt(include_frontier):
         "**World Lore** — geopolitics & global affairs",
         "**Tech Tea** — technology & innovation",
         "**Data Dive** — AI research, ML engineering & data science",
-        "**Catalyst Calendar** — upcoming economic data releases, Fed activity, "
-        "and notable report publishings that could move markets",
-        "**Speed Round** — 5-7 punchy one-liners covering the most interesting bits across all categories",
     ])
     numbered = "\n".join(f"{i+1}. {s}" for i, s in enumerate(sections))
     return (
@@ -160,7 +153,7 @@ def system_prompt(include_frontier):
         "Index, Epoch ECI, METR time horizons). When an article cites benchmark scores, include "
         "the exact numbers and who they beat. Never invent, round, or extrapolate a score that "
         "is not in the article text.\n\n"
-        "For each section (except Speed Round) write 2-3 short paragraphs. "
+        "For each section write 2-3 short paragraphs. "
         "Be insightful but conversational — like a group chat, not a boardroom. "
         "If a category has no fresh articles, write one line saying it's a quiet day there. "
         "Use plain text (no markdown), just section headers in ALL CAPS followed by a blank line."
@@ -264,8 +257,6 @@ SECTION_COLORS = {
     "WORLD LORE": "#6366f1",
     "TECH TEA": "#f59e0b",
     "DATA DIVE": "#ec4899",
-    "CATALYST CALENDAR": "#ef4444",
-    "SPEED ROUND": "#8b5cf6",
 }
 
 
