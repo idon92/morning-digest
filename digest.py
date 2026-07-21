@@ -132,13 +132,17 @@ def fetch_articles(feeds):
 
 def system_prompt():
     sections = [
-        "**Money Talk** — finance & markets",
         "**Frontier Watch** — biggest releases & research from frontier AI labs "
         "(OpenAI, Anthropic, DeepMind, Meta AI, xAI, Mistral)",
         "**Benchmark Beat** — new AI benchmark results, eval releases, and leaderboard moves",
         "**World Lore** — geopolitics & global affairs",
         "**Tech Tea** — technology & innovation",
         "**Data Dive** — AI research, ML engineering & data science",
+        "**Money Talk** — finance & markets. Close this section with a 'TICKERS TO WATCH' list: "
+        "3-5 stocks or ETFs that appear in today's provided articles, one line each — ticker "
+        "symbol, company/fund name, and why it's in the news right now. Open the list with the "
+        "exact line 'Not investment advice — just what's hot in today's headlines.' Only name "
+        "tickers whose news is in the provided articles; never recommend from memory.",
     ]
     numbered = "\n".join(f"{i+1}. {s}" for i, s in enumerate(sections))
     return (
