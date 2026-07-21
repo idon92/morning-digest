@@ -9,6 +9,7 @@ import smtplib
 import datetime as dt
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from urllib.parse import quote
 
 import time
 
@@ -261,6 +262,34 @@ def call_gemini(prompt):
 
 # ── HTML email formatting ─────────────────────────────────────────────────────
 
+FEEDBACK_EMAIL = "ian@afterquery.com"
+
+
+def feedback_block(today):
+    # Email clients strip real forms; prefilled mailto links are the portable "quick form".
+    def mailto(rating):
+        subject = quote(f"Digest feedback ({today}): {rating}")
+        return f"mailto:{FEEDBACK_EMAIL}?subject={subject}"
+
+    link_style = (
+        "display:inline-block;padding:8px 14px;margin:0 4px;border-radius:8px;"
+        "background:#334155;color:#e2e8f0;text-decoration:none;font-size:14px;"
+    )
+    return f"""
+    <tr><td style="padding:28px 32px 4px;">
+        <div style="background:#0f172a;border-radius:10px;padding:18px 20px;text-align:center;">
+            <div style="font-size:13px;font-weight:700;letter-spacing:1px;color:#94a3b8;margin-bottom:12px;">
+                HOW WAS TODAY'S DIGEST?
+            </div>
+            <a href="{mailto('Great')}" style="{link_style}">&#128293; Great</a>
+            <a href="{mailto('Meh')}" style="{link_style}">&#128528; Meh</a>
+            <a href="{mailto('Not useful')}" style="{link_style}">&#128078; Not useful</a>
+            <div style="font-size:12px;color:#64748b;margin-top:12px;">
+                One tap opens a pre-filled email &mdash; add a line if you like, or just hit reply.
+            </div>
+        </div>
+    </td></tr>"""
+
 SECTION_COLORS = {
     "MONEY TALK": "#10b981",
     "FRONTIER WATCH": "#06b6d4",
@@ -330,6 +359,8 @@ def digest_to_html(raw_text):
 
     {sections_html}
 
+    {feedback_block(today)}
+
     <!-- footer -->
     <tr><td style="padding:28px 32px;text-align:center;">
         <div style="font-size:12px;color:#475569;">
@@ -353,6 +384,7 @@ def send_email(html_body, recipients):
             msg = MIMEMultipart("alternative")
             msg["Subject"] = f"Your Morning Digest — {today}"
             msg["From"] = GMAIL_ADDRESS
+            msg["Reply-To"] = FEEDBACK_EMAIL
             msg["To"] = recipient
             msg.attach(MIMEText("Your email client doesn't support HTML.", "plain"))
             msg.attach(MIMEText(html_body, "html"))
