@@ -5,6 +5,7 @@ import os
 import argparse
 import calendar
 import json
+import re
 import smtplib
 import datetime as dt
 from email.mime.multipart import MIMEMultipart
@@ -26,6 +27,14 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]  # fallback summarizer
 KIMI_API_KEY = os.environ.get("KIMI_API_KEY", "")
 KIMI_BASE_URL = os.environ.get("KIMI_BASE_URL", "https://api.moonshot.ai/v1")
 KIMI_MODEL = os.environ.get("KIMI_MODEL", "kimi-k3")
+# Grok/X search for Benchmark Beat. Optional — absent key just skips the section's X items.
+XAI_API_KEY = os.environ.get("XAI_API_KEY", "")
+XAI_BASE_URL = os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1")
+XAI_MODEL = os.environ.get("XAI_MODEL", "grok-4.5")
+# Dedup state for X citations. CI runners are ephemeral, so "already cited" lives in a gist.
+# CI maps the GH_GIST_TOKEN secret onto GITHUB_TOKEN (see digest.yml).
+GH_GIST_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+SEEN_GIST_ID = os.environ.get("SEEN_GIST_ID", "")
 GMAIL_ADDRESS = os.environ["GMAIL_ADDRESS"]
 GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
 RECIPIENT_EMAIL = os.environ["RECIPIENT_EMAIL"]
@@ -91,6 +100,13 @@ MAX_ARTICLE_AGE_HOURS = 36
 # Eval orgs publish ~weekly; a daily-sized window would leave the section empty most days.
 CATEGORY_MAX_AGE_HOURS = {"Benchmark Beat": 72}
 
+# X/Grok search settings — matches the Benchmark Beat window so the section is internally consistent.
+MAX_X_POSTS = 5
+X_SEARCH_AGE_DAYS = 3
+SEEN_GIST_FILE = "seen_x_citations.json"
+SEEN_HISTORY_LIMIT = 500  # ~3 months of posts at 5/day; keeps the gist small and the read fast
+X_POST_RE = re.compile(r"(?:x|twitter)\.com/[^/\s]+/status/(\d+)", re.I)
+
 
 # ── RSS fetching ──────────────────────────────────────────────────────────────
 
@@ -128,13 +144,178 @@ def fetch_articles(feeds):
     return articles
 
 
+# ── X / Grok benchmark chatter ────────────────────────────────────────────────
+#
+# RSS only reaches orgs that blog. Benchmark scores usually surface on X first, so
+# Grok's server-side x_search tool fills that gap for Benchmark Beat.
+# Note: xAI retired the old `search_parameters` Live Search API on 2026-01-12 —
+# this uses the current agent-tools shape (POST /v1/responses with tools=[x_search]).
+
+def _gist_headers():
+    return {"Authorization": f"Bearer {GH_GIST_TOKEN}", "Accept": "application/vnd.github+json"}
+
+
+def load_seen_citations():
+    """Post IDs cited in earlier digests. Returns None when persistence is unavailable —
+    distinct from [] (persistence works, nothing seen yet), because None means we cannot
+    promise no repeats and should say so out loud."""
+    if not (SEEN_GIST_ID and GH_GIST_TOKEN):
+        print("[warn] SEEN_GIST_ID/GITHUB_TOKEN unset — X dedup OFF, posts may repeat")
+        return None
+    try:
+        r = requests.get(f"https://api.github.com/gists/{SEEN_GIST_ID}",
+                         headers=_gist_headers(), timeout=20)
+        r.raise_for_status()
+        raw = r.json().get("files", {}).get(SEEN_GIST_FILE, {}).get("content") or "[]"
+        ids = json.loads(raw)
+        if not isinstance(ids, list):
+            raise ValueError("gist payload is not a list")
+        return [str(i) for i in ids]
+    except Exception as e:
+        print(f"[warn] couldn't read dedup gist ({e}) — X dedup OFF this run")
+        return None
+
+
+def save_seen_citations(previous, new_ids):
+    """Append newly-cited IDs, oldest trimmed first. Called only after a successful send so
+    a crash mid-run doesn't burn posts that nobody ever received."""
+    if previous is None or not new_ids:
+        return
+    merged = previous + [i for i in new_ids if i not in set(previous)]
+    merged = merged[-SEEN_HISTORY_LIMIT:]
+    try:
+        r = requests.patch(
+            f"https://api.github.com/gists/{SEEN_GIST_ID}",
+            headers=_gist_headers(),
+            json={"files": {SEEN_GIST_FILE: {"content": json.dumps(merged, indent=0)}}},
+            timeout=20,
+        )
+        r.raise_for_status()
+        print(f"       dedup store now holds {len(merged)} post id(s)")
+    except Exception as e:
+        print(f"[warn] couldn't update dedup gist: {e} — these posts may repeat tomorrow")
+
+
+def _x_post_id(url):
+    m = X_POST_RE.search(url or "")
+    return m.group(1) if m else None
+
+
+def _responses_output_text(data):
+    """Pull assistant text out of a /v1/responses payload without assuming exact nesting."""
+    if isinstance(data.get("output_text"), str):
+        return data["output_text"]
+    chunks = []
+    for item in data.get("output") or []:
+        for block in (item or {}).get("content") or []:
+            if (block or {}).get("type") == "output_text" and block.get("text"):
+                chunks.append(block["text"])
+    return "\n".join(chunks)
+
+
+def _extract_json_array(text):
+    text = re.sub(r"^\s*```(?:json)?|```\s*$", "", (text or "").strip(), flags=re.M)
+    start, end = text.find("["), text.rfind("]")
+    if start == -1 or end <= start:
+        return []
+    try:
+        parsed = json.loads(text[start:end + 1])
+        return parsed if isinstance(parsed, list) else []
+    except ValueError:
+        return []
+
+
+def fetch_x_benchmark_posts(seen_ids):
+    """Recent X posts about AI benchmark results, excluding anything cited before.
+
+    Returns RSS-shaped dicts so build_prompt needs no special case. Never raises: the
+    digest must still go out if xAI is down.
+    """
+    if not XAI_API_KEY:
+        print("[warn] XAI_API_KEY not set — skipping X benchmark search")
+        return []
+
+    today = dt.datetime.now(dt.timezone.utc).date()
+    since = today - dt.timedelta(days=X_SEARCH_AGE_DAYS)
+    ask = (
+        f"Search X for the most notable posts from the last {X_SEARCH_AGE_DAYS} days about AI "
+        "benchmark and eval results — new scores, leaderboard movements, eval releases, or "
+        "credible critiques of a benchmark. Prefer posts from labs, benchmark maintainers and "
+        "researchers over hype accounts, and prefer posts citing concrete numbers.\n\n"
+        f"Return AT MOST {MAX_X_POSTS} posts as a JSON array and nothing else. Each element: "
+        '{"url": "<full x.com post URL>", "handle": "<author handle without @>", '
+        '"claim": "<one sentence, max 30 words, stating what the post actually reports>"}\n'
+        "Only include posts you actually found via search — never construct or guess a URL. "
+        "If nothing noteworthy was posted, return []."
+    )
+    payload = {
+        "model": XAI_MODEL,
+        "input": [{"role": "user", "content": ask}],
+        "tools": [{
+            "type": "x_search",
+            "from_date": since.isoformat(),
+            "to_date": today.isoformat(),
+        }],
+    }
+    try:
+        resp = requests.post(
+            f"{XAI_BASE_URL}/responses",
+            headers={"Authorization": f"Bearer {XAI_API_KEY}"},
+            json=payload,
+            timeout=(30, 180),
+        )
+        if resp.status_code != 200:
+            print(f"[warn] x_search HTTP {resp.status_code}: {resp.text[:200]}")
+            return []
+        data = resp.json()
+    except Exception as e:
+        print(f"[warn] x_search call failed: {e}")
+        return []
+
+    # Cross-check model-reported URLs against the API's own citation list, so a hallucinated
+    # link can't reach the digest. If citations are absent, fall back to URL-shape validation.
+    cited = {pid for pid in (_x_post_id(u) for u in data.get("citations") or []) if pid}
+    items, new_ids = [], []
+    for entry in _extract_json_array(_responses_output_text(data)):
+        if not isinstance(entry, dict):
+            continue
+        url = (entry.get("url") or "").strip()
+        pid = _x_post_id(url)
+        if not pid or pid in seen_ids or pid in new_ids:
+            continue
+        if cited and pid not in cited:
+            print(f"[warn] dropping uncited X post {pid} (not in API citations)")
+            continue
+        handle = (entry.get("handle") or "").lstrip("@").strip() or "unknown"
+        claim = " ".join((entry.get("claim") or "").split())[:280]
+        if not claim:
+            continue
+        items.append({
+            "title": f"[X] @{handle}: {claim[:120]}",
+            "link": url,
+            "summary": f"X post by @{handle} — {claim}",
+            "post_id": pid,
+        })
+        new_ids.append(pid)
+        if len(items) >= MAX_X_POSTS:
+            break
+
+    skipped = len(cited - set(new_ids)) if cited else 0
+    print(f"       x_search: {len(items)} new post(s)"
+          + (f", {skipped} already-seen/filtered" if skipped else ""))
+    return items
+
+
 # ── Gemini summarization ──────────────────────────────────────────────────────
 
 def system_prompt():
     sections = [
         "**Frontier Watch** — biggest releases & research from frontier AI labs "
         "(OpenAI, Anthropic, DeepMind, Meta AI, xAI, Mistral)",
-        "**Benchmark Beat** — new AI benchmark results, eval releases, and leaderboard moves",
+        "**Benchmark Beat** — new AI benchmark results, eval releases, and leaderboard moves. "
+        "Some items are X posts, prefixed '[X] @handle'. Treat those as claims attributable to "
+        "that account rather than established fact: name the account when you use one, and never "
+        "present a post's numbers as confirmed the way you would a published result.",
         "**World Lore** — geopolitics & global affairs",
         "**Tech Tea** — technology & innovation",
         "**Data Dive** — AI research, ML engineering & data science",
@@ -425,20 +606,29 @@ def main():
             personal = {p.lower() for p in PERSONAL_EMAILS}
             recipients = [r for r in recipients if r.lower() not in personal]
 
-    print(f"[1/4] fetching RSS feeds ({args.audience}) …")
+    print(f"[1/5] fetching RSS feeds ({args.audience}) …")
     articles = fetch_articles(feeds)
     total = sum(len(v) for v in articles.values())
     print(f"       pulled {total} articles across {len(articles)} categories")
 
-    print("[2/4] summarizing …")
+    print("[2/5] searching X for benchmark chatter …")
+    seen = load_seen_citations()
+    x_items = fetch_x_benchmark_posts(set(seen or []))
+    if x_items:
+        articles.setdefault("Benchmark Beat", []).extend(x_items)
+
+    print("[3/5] summarizing …")
     prompt = build_prompt(articles)
     raw_digest = call_llm(prompt)
 
-    print("[3/4] building HTML email …")
+    print("[4/5] building HTML email …")
     html = digest_to_html(raw_digest)
 
-    print(f"[4/4] sending email to {len(recipients)} recipient(s) …")
+    print(f"[5/5] sending email to {len(recipients)} recipient(s) …")
     send_email(html, recipients)
+
+    # Only after a successful send — a crash earlier shouldn't burn unseen posts.
+    save_seen_citations(seen, [i["post_id"] for i in x_items])
 
 
 if __name__ == "__main__":

@@ -30,6 +30,8 @@ jobs:
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
           KIMI_BASE_URL: ${{ secrets.KIMI_BASE_URL }}
           KIMI_MODEL: ${{ secrets.KIMI_MODEL }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          SEEN_GIST_ID: ${{ secrets.SEEN_GIST_ID }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
